@@ -6,13 +6,17 @@ import json
 import shap
 import matplotlib.pyplot as plt
 
+from sklearn.datasets import load_breast_cancer
+from sklearn.model_selection import train_test_split
+from xgboost import XGBClassifier
+
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
-    page_title="WDBC XGBoost + SHAP",
+    page_title="WDBC AI Cancer Prediction",
     page_icon="🧬",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -23,51 +27,99 @@ st.set_page_config(
 # CUSTOM CSS
 # ============================================================
 
+st.markdown("""
+<style>
+
+.main {
+    padding-top: 1rem;
+}
+
+.block-container {
+    padding-top: 2rem;
+}
+
+[data-testid="stSidebar"] {
+    background-color: #f7f9fc;
+}
+
+[data-testid="stSidebar"] h1 {
+    color: #1f4e79;
+}
+
+.metric-card {
+    background-color: #f8f9fa;
+    padding: 20px;
+    border-radius: 12px;
+    border: 1px solid #e0e0e0;
+    text-align: center;
+}
+
+.big-title {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: #1f4e79;
+}
+
+.subtitle {
+    font-size: 1.1rem;
+    color: #555;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
+# HEADER
+# ============================================================
+
 st.markdown(
-    """
-    <style>
-
-    .main-title {
-        font-size: 38px;
-        font-weight: 700;
-        margin-bottom: 5px;
-    }
-
-    .subtitle {
-        font-size: 18px;
-        color: #6b7280;
-        margin-bottom: 25px;
-    }
-
-    .metric-card {
-        padding: 20px;
-        border-radius: 12px;
-        border: 1px solid #e5e7eb;
-        background-color: #f8fafc;
-        text-align: center;
-    }
-
-    .result-box {
-        padding: 25px;
-        border-radius: 15px;
-        text-align: center;
-        margin-top: 15px;
-        margin-bottom: 20px;
-    }
-
-    .small-text {
-        color: #6b7280;
-        font-size: 14px;
-    }
-
-    </style>
-    """,
+    '<div class="big-title">🧬 WDBC AI Cancer Prediction</div>',
     unsafe_allow_html=True
+)
+
+st.markdown(
+    '<div class="subtitle">XGBoost + SHAP Explainable Breast Cancer Classification</div>',
+    unsafe_allow_html=True
+)
+
+st.write("")
+
+
+# ============================================================
+# SIDEBAR NAVIGATION
+# ============================================================
+
+st.sidebar.title("🧬 WDBC AI")
+
+page = st.sidebar.radio(
+    "Select a section",
+    [
+        "🏠 Prediction",
+        "📊 Ablation Study",
+        "🔍 SHAP Explainability",
+        "📈 Model Performance",
+        "ℹ️ About"
+    ]
+)
+
+st.sidebar.markdown("---")
+
+st.sidebar.info(
+    """
+    **Dataset:** Wisconsin Diagnostic Breast Cancer
+
+    **Model:** XGBoost
+
+    **Explainability:** SHAP
+
+    **Task:** Binary Classification
+    """
 )
 
 
 # ============================================================
-# LOAD MODEL
+# LOAD FINAL MODEL
 # ============================================================
 
 @st.cache_resource
@@ -81,18 +133,15 @@ def load_model():
     return model, features
 
 
-model, features = load_model()
+model, selected_features = load_model()
 
 
 # ============================================================
-# IMPORTANT CLASS MAPPING
-# ============================================================
-# Based on sklearn load_breast_cancer():
-#
+# CLASS LABELS
+# IMPORTANT:
+# sklearn breast cancer dataset:
 # 0 = malignant
 # 1 = benign
-#
-# This matches your uploaded notebook.
 # ============================================================
 
 CLASS_NAMES = {
@@ -108,691 +157,613 @@ CLASS_NAMES = {
 @st.cache_data
 def load_results():
 
-    try:
-        results = pd.read_csv(
-            "WDBC_XGBoost_Ablation_Results.csv"
-        )
-    except Exception:
-        results = pd.DataFrame()
+    results = pd.read_csv(
+        "WDBC_XGBoost_Ablation_Results.csv"
+    )
 
-    try:
-        shap_ranking = pd.read_csv(
-            "WDBC_SHAP_Feature_Ranking.csv"
-        )
-    except Exception:
-        shap_ranking = pd.DataFrame()
+    shap_ranking = pd.read_csv(
+        "WDBC_SHAP_Feature_Ranking.csv"
+    )
 
     return results, shap_ranking
 
 
-results, shap_ranking = load_results()
+results_df, shap_ranking_df = load_results()
 
 
 # ============================================================
-# SIDEBAR NAVIGATION
+# DYNAMIC SHAP BASELINE MODEL
 # ============================================================
 
-st.sidebar.title("🧬 WDBC AI")
+@st.cache_resource
+def create_shap_baseline():
 
-st.sidebar.markdown(
-    "### Navigation"
-)
+    data = load_breast_cancer()
 
-page = st.sidebar.radio(
-    "Select a section",
-    [
-        "🏠 Prediction",
-        "📊 Ablation Study",
-        "🔍 SHAP Explainability",
-        "📈 Model Performance",
-        "ℹ️ About"
-    ]
-)
+    X = pd.DataFrame(
+        data.data,
+        columns=data.feature_names
+    )
 
+    y = pd.Series(
+        data.target,
+        name="target"
+    )
 
-# ============================================================
-# SIDEBAR MODEL INFORMATION
-# ============================================================
+    X_train_shap, X_test_shap, y_train_shap, y_test_shap = train_test_split(
+        X,
+        y,
+        test_size=0.20,
+        random_state=42,
+        stratify=y
+    )
 
-st.sidebar.divider()
+    baseline_model = XGBClassifier(
+        n_estimators=200,
+        max_depth=4,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        objective="binary:logistic",
+        eval_metric="logloss",
+        random_state=42,
+        n_jobs=-1
+    )
 
-st.sidebar.markdown(
-    "### 🔬 Model Information"
-)
+    baseline_model.fit(
+        X_train_shap,
+        y_train_shap
+    )
 
-st.sidebar.success(
-    "XGBoost + SHAP"
-)
-
-st.sidebar.write(
-    f"**Features:** {len(features)}"
-)
-
-st.sidebar.write(
-    "**Feature Selection:** SHAP Top-15"
-)
-
-st.sidebar.write(
-    "**Dataset:** WDBC"
-)
-
-st.sidebar.write(
-    "**Model:** XGBoost"
-)
-
-st.sidebar.divider()
-
-st.sidebar.warning(
-    "Research/demo purposes only. "
-    "This application is not a medical diagnostic system."
-)
+    return (
+        baseline_model,
+        X_train_shap,
+        X_test_shap,
+        y_train_shap,
+        y_test_shap
+    )
 
 
 # ============================================================
-# PAGE 1 — PREDICTION
+# CALCULATE SHAP VALUES
+# ============================================================
+
+@st.cache_data
+def calculate_shap_values(model, X_data):
+
+    explainer = shap.TreeExplainer(model)
+
+    shap_values = explainer.shap_values(X_data)
+
+    return shap_values
+
+
+# ============================================================
+# PREDICTION PAGE
 # ============================================================
 
 if page == "🏠 Prediction":
 
-    st.markdown(
-        '<div class="main-title">🧬 WDBC Breast Cancer Prediction</div>',
-        unsafe_allow_html=True
+    st.header("🏠 Breast Cancer Prediction")
+
+    st.write(
+        "Enter the selected WDBC features below and use the trained "
+        "XGBoost model to predict the cancer class."
     )
 
-    st.markdown(
-        '<div class="subtitle">'
-        'XGBoost classification with SHAP-guided feature selection'
-        '</div>',
-        unsafe_allow_html=True
-    )
-
-    st.info(
-        "Enter the 15 SHAP-selected WDBC feature values below "
-        "and click Predict."
-    )
-
-    st.markdown(
-        "### 🔢 Patient Feature Input"
-    )
+    st.markdown("---")
 
     # --------------------------------------------------------
-    # FEATURE INPUTS
+    # INPUT FEATURES
     # --------------------------------------------------------
 
-    input_data = {}
+    input_values = {}
 
     cols = st.columns(3)
 
-    for i, feature in enumerate(features):
+    for i, feature in enumerate(selected_features):
 
         with cols[i % 3]:
 
-            input_data[feature] = st.number_input(
+            input_values[feature] = st.number_input(
                 feature,
                 value=0.0,
-                format="%.6f",
-                key=f"input_{feature}"
+                format="%.4f"
             )
 
-
-    st.divider()
-
+    st.write("")
 
     # --------------------------------------------------------
-    # ACTION BUTTONS
+    # PREDICT BUTTON
     # --------------------------------------------------------
 
-    col1, col2, col3 = st.columns([2, 2, 2])
-
-    with col1:
-
-        predict_button = st.button(
-            "🔍 Predict",
-            type="primary",
-            use_container_width=True
-        )
-
-    with col2:
-
-        clear_button = st.button(
-            "🔄 Clear Inputs",
-            use_container_width=True
-        )
-
-    with col3:
-
-        st.button(
-            "📋 15 SHAP Features",
-            use_container_width=True
-        )
-
-
-    # --------------------------------------------------------
-    # CLEAR INPUTS
-    # --------------------------------------------------------
-
-    if clear_button:
-
-        st.rerun()
-
-
-    # --------------------------------------------------------
-    # PREDICTION
-    # --------------------------------------------------------
-
-    if predict_button:
+    if st.button(
+        "🔬 Predict Cancer Class",
+        type="primary",
+        use_container_width=True
+    ):
 
         input_df = pd.DataFrame(
-            [input_data],
-            columns=features
+            [input_values]
         )
+
+        prediction = int(
+            model.predict(input_df)[0]
+        )
+
+        probabilities = model.predict_proba(
+            input_df
+        )[0]
+
+        predicted_class = CLASS_NAMES[prediction]
+
+        st.markdown("---")
+
+        # ----------------------------------------------------
+        # RESULT
+        # ----------------------------------------------------
+
+        if predicted_class == "Benign":
+
+            st.success(
+                f"### Prediction: {predicted_class}"
+            )
+
+        else:
+
+            st.error(
+                f"### Prediction: {predicted_class}"
+            )
+
+        # ----------------------------------------------------
+        # PROBABILITIES
+        # ----------------------------------------------------
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            st.metric(
+                "Malignant Probability",
+                f"{probabilities[0] * 100:.2f}%"
+            )
+
+        with col2:
+
+            st.metric(
+                "Benign Probability",
+                f"{probabilities[1] * 100:.2f}%"
+            )
+
+        st.write("### Prediction Probability")
+
+        probability_df = pd.DataFrame(
+            {
+                "Class": [
+                    "Malignant",
+                    "Benign"
+                ],
+                "Probability": [
+                    probabilities[0],
+                    probabilities[1]
+                ]
+            }
+        )
+
+        st.bar_chart(
+            probability_df.set_index("Class")
+        )
+
+        # ----------------------------------------------------
+        # INPUT DATA
+        # ----------------------------------------------------
+
+        st.write("### Input Features")
+
+        st.dataframe(
+            input_df,
+            use_container_width=True
+        )
+
+        # ----------------------------------------------------
+        # SHAP EXPLANATION FOR PREDICTION
+        # ----------------------------------------------------
+
+        st.write("### 🔍 Prediction Explanation")
 
         try:
 
-            prediction = int(
-                model.predict(input_df)[0]
-            )
+            explainer = shap.TreeExplainer(model)
 
-            probabilities = model.predict_proba(
+            shap_values = explainer.shap_values(
                 input_df
-            )[0]
-
-            malignant_probability = float(
-                probabilities[0]
             )
 
-            benign_probability = float(
-                probabilities[1]
-            )
+            if isinstance(shap_values, list):
 
-            predicted_class = CLASS_NAMES[
-                prediction
-            ]
-
-
-            # ------------------------------------------------
-            # RESULT
-            # ------------------------------------------------
-
-            st.divider()
-
-            st.subheader(
-                "🎯 Prediction Result"
-            )
-
-            if prediction == 0:
-
-                st.error(
-                    "⚠️ Predicted Class: MALIGNANT"
-                )
+                shap_values_single = shap_values[
+                    prediction
+                ]
 
             else:
 
-                st.success(
-                    "✅ Predicted Class: BENIGN"
-                )
+                shap_values_single = shap_values[0]
 
+            fig = plt.figure(figsize=(10, 6))
 
-            # ------------------------------------------------
-            # PROBABILITY METRICS
-            # ------------------------------------------------
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-
-                st.metric(
-                    "Prediction",
-                    predicted_class
-                )
-
-            with c2:
-
-                st.metric(
-                    "Malignant Probability",
-                    f"{malignant_probability:.2%}"
-                )
-
-            with c3:
-
-                st.metric(
-                    "Benign Probability",
-                    f"{benign_probability:.2%}"
-                )
-
-
-            # ------------------------------------------------
-            # PROBABILITY BAR
-            # ------------------------------------------------
-
-            st.subheader(
-                "📊 Prediction Probability"
+            shap.waterfall_plot(
+                shap.Explanation(
+                    values=shap_values_single,
+                    base_values=explainer.expected_value,
+                    data=input_df.iloc[0],
+                    feature_names=input_df.columns
+                ),
+                max_display=15,
+                show=False
             )
 
-            probability_df = pd.DataFrame(
-                {
-                    "Class": [
-                        "Malignant",
-                        "Benign"
-                    ],
-                    "Probability": [
-                        malignant_probability,
-                        benign_probability
-                    ]
-                }
+            plt.tight_layout()
+
+            st.pyplot(
+                fig,
+                clear_figure=True
             )
 
-            st.bar_chart(
-                probability_df.set_index("Class")
-            )
-
-
-            # ------------------------------------------------
-            # SHAP LOCAL EXPLANATION
-            # ------------------------------------------------
-
-            st.divider()
-
-            st.subheader(
-                "🔍 Why did the model make this prediction?"
-            )
-
-            try:
-
-                explainer = shap.TreeExplainer(
-                    model
-                )
-
-                shap_explanation = explainer(
-                    input_df
-                )
-
-                fig, ax = plt.subplots(
-                    figsize=(10, 6)
-                )
-
-                shap.plots.waterfall(
-                    shap_explanation[0],
-                    show=False
-                )
-
-                plt.tight_layout()
-
-                st.pyplot(
-                    fig,
-                    clear_figure=True
-                )
-
-                plt.close(fig)
-
-            except Exception as e:
-
-                st.warning(
-                    "SHAP waterfall plot could not be generated."
-                )
-
-                st.code(
-                    str(e)
-                )
-
-
-            # ------------------------------------------------
-            # INPUT TABLE
-            # ------------------------------------------------
-
-            with st.expander(
-                "📋 View Input Feature Values"
-            ):
-
-                st.dataframe(
-                    input_df.T.rename(
-                        columns={0: "Value"}
-                    ),
-                    use_container_width=True
-                )
-
+            plt.close(fig)
 
         except Exception as e:
 
-            st.error(
-                "Prediction failed."
+            st.warning(
+                f"SHAP prediction explanation could not be generated: {e}"
             )
-
-            st.exception(e)
 
 
 # ============================================================
-# PAGE 2 — ABLATION STUDY
+# ABLATION STUDY
 # ============================================================
 
 elif page == "📊 Ablation Study":
 
-    st.title(
-        "📊 SHAP-Guided Ablation Study"
+    st.header("📊 XGBoost Ablation Study")
+
+    st.write(
+        "Comparison of different feature-selection experiments "
+        "performed on the WDBC dataset."
     )
 
-    st.markdown(
-        """
-        Comparison of the baseline model, feature-group ablations,
-        and SHAP-guided feature selection experiments.
-        """
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # RESULTS TABLE
+    # --------------------------------------------------------
+
+    st.subheader("Ablation Results")
+
+    st.dataframe(
+        results_df,
+        use_container_width=True
     )
 
-    if results.empty:
+    st.markdown("---")
 
-        st.warning(
-            "WDBC_XGBoost_Ablation_Results.csv was not found."
-        )
+    # --------------------------------------------------------
+    # ACCURACY
+    # --------------------------------------------------------
 
-    else:
+    st.subheader("Accuracy Comparison")
 
-        # ----------------------------------------------------
-        # RESULTS TABLE
-        # ----------------------------------------------------
+    accuracy_df = results_df[
+        ["Experiment", "Accuracy"]
+    ].set_index("Experiment")
 
-        st.subheader(
-            "📋 Experiment Results"
-        )
+    st.bar_chart(
+        accuracy_df
+    )
 
-        st.dataframe(
-            results,
-            use_container_width=True,
-            hide_index=True
-        )
+    # --------------------------------------------------------
+    # ROC-AUC
+    # --------------------------------------------------------
 
+    st.subheader("ROC-AUC Comparison")
 
-        # ----------------------------------------------------
-        # ACCURACY
-        # ----------------------------------------------------
+    auc_df = results_df[
+        ["Experiment", "ROC-AUC"]
+    ].set_index("Experiment")
 
-        if "Accuracy" in results.columns:
+    st.bar_chart(
+        auc_df
+    )
 
-            st.subheader(
-                "🎯 Accuracy Comparison"
-            )
+    # --------------------------------------------------------
+    # F1 SCORE
+    # --------------------------------------------------------
 
-            accuracy_data = results[
-                ["Experiment", "Accuracy"]
-            ].copy()
+    st.subheader("F1 Score Comparison")
 
-            accuracy_data = accuracy_data.set_index(
-                "Experiment"
-            )
+    f1_df = results_df[
+        ["Experiment", "F1"]
+    ].set_index("Experiment")
 
-            st.bar_chart(
-                accuracy_data
-            )
+    st.bar_chart(
+        f1_df
+    )
 
+    # --------------------------------------------------------
+    # RECALL
+    # --------------------------------------------------------
 
-        # ----------------------------------------------------
-        # ROC-AUC
-        # ----------------------------------------------------
+    st.subheader("Recall Comparison")
 
-        if "ROC-AUC" in results.columns:
+    recall_df = results_df[
+        ["Experiment", "Recall"]
+    ].set_index("Experiment")
 
-            st.subheader(
-                "📈 ROC-AUC Comparison"
-            )
-
-            auc_data = results[
-                ["Experiment", "ROC-AUC"]
-            ].copy()
-
-            auc_data = auc_data.set_index(
-                "Experiment"
-            )
-
-            st.bar_chart(
-                auc_data
-            )
-
-
-        # ----------------------------------------------------
-        # F1 SCORE
-        # ----------------------------------------------------
-
-        if "F1" in results.columns:
-
-            st.subheader(
-                "⚖️ F1 Score Comparison"
-            )
-
-            f1_data = results[
-                ["Experiment", "F1"]
-            ].copy()
-
-            f1_data = f1_data.set_index(
-                "Experiment"
-            )
-
-            st.bar_chart(
-                f1_data
-            )
-
-
-        # ----------------------------------------------------
-        # RECALL
-        # ----------------------------------------------------
-
-        if "Recall" in results.columns:
-
-            st.subheader(
-                "🎯 Recall Comparison"
-            )
-
-            recall_data = results[
-                ["Experiment", "Recall"]
-            ].copy()
-
-            recall_data = recall_data.set_index(
-                "Experiment"
-            )
-
-            st.bar_chart(
-                recall_data
-            )
+    st.bar_chart(
+        recall_df
+    )
 
 
 # ============================================================
-# PAGE 3 — SHAP EXPLAINABILITY
+# SHAP EXPLAINABILITY PAGE
 # ============================================================
 
 elif page == "🔍 SHAP Explainability":
 
-    st.title(
-        "🔍 SHAP Explainability"
+    st.header("🔍 Dynamic SHAP Explainability")
+
+    st.write(
+        "The SHAP summary plots below are generated dynamically "
+        "from the XGBoost model rather than using a static image."
     )
 
-    st.markdown(
-        """
-        SHAP identifies which features contribute most strongly
-        to the XGBoost predictions.
-        """
-    )
+    st.markdown("---")
 
-    if shap_ranking.empty:
+    # --------------------------------------------------------
+    # CREATE BASELINE MODEL
+    # --------------------------------------------------------
 
-        st.warning(
-            "WDBC_SHAP_Feature_Ranking.csv was not found."
+    with st.spinner(
+        "Preparing XGBoost model and SHAP values..."
+    ):
+
+        (
+            shap_model,
+            X_train_shap,
+            X_test_shap,
+            y_train_shap,
+            y_test_shap
+        ) = create_shap_baseline()
+
+        shap_values_dynamic = calculate_shap_values(
+            shap_model,
+            X_train_shap
         )
 
-    else:
+    st.success(
+        "Dynamic SHAP model is ready."
+    )
 
-        # ----------------------------------------------------
-        # SHAP RANKING TABLE
-        # ----------------------------------------------------
+    # --------------------------------------------------------
+    # FEATURE NUMBER SELECTOR
+    # --------------------------------------------------------
+
+    max_features = st.slider(
+        "Number of features to display",
+        min_value=5,
+        max_value=30,
+        value=20,
+        step=5
+    )
+
+    # --------------------------------------------------------
+    # GENERATE SUMMARY PLOT
+    # --------------------------------------------------------
+
+    generate_plot = st.button(
+        "🔄 Generate SHAP Summary Plot",
+        type="primary",
+        use_container_width=True
+    )
+
+    if generate_plot:
+
+        with st.spinner(
+            "Generating SHAP Summary Plot..."
+        ):
+
+            fig = plt.figure(
+                figsize=(10, 8)
+            )
+
+            shap.summary_plot(
+                shap_values_dynamic,
+                X_train_shap,
+                max_display=max_features,
+                show=False
+            )
+
+            plt.tight_layout()
+
+            st.pyplot(
+                fig,
+                clear_figure=True
+            )
+
+            plt.close(fig)
+
+    # --------------------------------------------------------
+    # DYNAMIC SHAP BAR PLOT
+    # --------------------------------------------------------
+
+    st.markdown("---")
+
+    st.subheader(
+        "Dynamic SHAP Feature Importance"
+    )
+
+    generate_bar = st.button(
+        "📊 Generate SHAP Bar Plot",
+        use_container_width=True
+    )
+
+    if generate_bar:
+
+        with st.spinner(
+            "Generating SHAP Feature Importance..."
+        ):
+
+            fig = plt.figure(
+                figsize=(10, 8)
+            )
+
+            shap.summary_plot(
+                shap_values_dynamic,
+                X_train_shap,
+                plot_type="bar",
+                max_display=max_features,
+                show=False
+            )
+
+            plt.tight_layout()
+
+            st.pyplot(
+                fig,
+                clear_figure=True
+            )
+
+            plt.close(fig)
+
+    # --------------------------------------------------------
+    # SHAP FEATURE RANKING FROM NOTEBOOK
+    # --------------------------------------------------------
+
+    st.markdown("---")
+
+    st.subheader(
+        "📌 SHAP Feature Ranking"
+    )
+
+    st.dataframe(
+        shap_ranking_df,
+        use_container_width=True
+    )
+
+    # --------------------------------------------------------
+    # TOP SHAP FEATURES
+    # --------------------------------------------------------
+
+    if len(shap_ranking_df) > 0:
 
         st.subheader(
-            "⭐ Global SHAP Feature Ranking"
+            "Top SHAP Features"
         )
 
-        st.dataframe(
-            shap_ranking,
-            use_container_width=True,
-            hide_index=True
+        top_n = st.slider(
+            "Number of top features",
+            min_value=5,
+            max_value=min(20, len(shap_ranking_df)),
+            value=min(10, len(shap_ranking_df))
         )
 
+        top_features = shap_ranking_df.head(
+            top_n
+        )
 
-        # ----------------------------------------------------
-        # TOP 15
-        # ----------------------------------------------------
+        feature_column = top_features.columns[0]
 
-        if (
-            "Feature" in shap_ranking.columns
-            and
-            "Mean_Absolute_SHAP" in shap_ranking.columns
-        ):
+        value_column = top_features.columns[1]
 
-            st.subheader(
-                "🔥 Top 15 SHAP Features"
-            )
+        chart_df = top_features[
+            [feature_column, value_column]
+        ].set_index(
+            feature_column
+        )
 
-            top15 = shap_ranking.head(15).copy()
-
-            chart_data = top15[
-                [
-                    "Feature",
-                    "Mean_Absolute_SHAP"
-                ]
-            ].set_index(
-                "Feature"
-            )
-
-            st.bar_chart(
-                chart_data
-            )
-
-
-        # ----------------------------------------------------
-        # TOP 10
-        # ----------------------------------------------------
-
-        with st.expander(
-            "🔎 View Top 10 SHAP Features"
-        ):
-
-            st.dataframe(
-                shap_ranking.head(10),
-                use_container_width=True,
-                hide_index=True
-            )
-
-
-        # ----------------------------------------------------
-        # TOP 15 FEATURE NAMES
-        # ----------------------------------------------------
-
-        with st.expander(
-            "🧬 View Features Used by Deployed Model"
-        ):
-
-            for i, feature in enumerate(
-                features,
-                start=1
-            ):
-
-                st.write(
-                    f"**{i}.** {feature}"
-                )
+        st.bar_chart(
+            chart_df
+        )
 
 
 # ============================================================
-# PAGE 4 — MODEL PERFORMANCE
+# MODEL PERFORMANCE PAGE
 # ============================================================
 
 elif page == "📈 Model Performance":
 
-    st.title(
-        "📈 Model Performance"
+    st.header("📈 Model Performance")
+
+    st.write(
+        "Performance metrics obtained from the WDBC XGBoost "
+        "ablation experiments."
     )
 
-    if results.empty:
+    st.markdown("---")
 
-        st.warning(
-            "Model results are unavailable."
+    # --------------------------------------------------------
+    # BEST EXPERIMENT
+    # --------------------------------------------------------
+
+    best_row = results_df.loc[
+        results_df["Accuracy"].idxmax()
+    ]
+
+    col1, col2, col3, col4, col5 = st.columns(5)
+
+    with col1:
+
+        st.metric(
+            "Accuracy",
+            f"{best_row['Accuracy']:.4f}"
         )
 
-    else:
+    with col2:
 
-        # ----------------------------------------------------
-        # BEST RESULTS
-        # ----------------------------------------------------
-
-        st.subheader(
-            "🏆 Performance Summary"
+        st.metric(
+            "Precision",
+            f"{best_row['Precision']:.4f}"
         )
 
-        best_accuracy = results[
-            "Accuracy"
-        ].max()
+    with col3:
 
-        best_auc = results[
-            "ROC-AUC"
-        ].max()
-
-        best_f1 = results[
-            "F1"
-        ].max()
-
-        best_recall = results[
-            "Recall"
-        ].max()
-
-
-        c1, c2, c3, c4 = st.columns(4)
-
-        with c1:
-
-            st.metric(
-                "Best Accuracy",
-                f"{best_accuracy:.4f}"
-            )
-
-        with c2:
-
-            st.metric(
-                "Best ROC-AUC",
-                f"{best_auc:.4f}"
-            )
-
-        with c3:
-
-            st.metric(
-                "Best F1",
-                f"{best_f1:.4f}"
-            )
-
-        with c4:
-
-            st.metric(
-                "Best Recall",
-                f"{best_recall:.4f}"
-            )
-
-
-        st.divider()
-
-
-        # ----------------------------------------------------
-        # FULL PERFORMANCE TABLE
-        # ----------------------------------------------------
-
-        st.subheader(
-            "📋 Complete Performance Table"
+        st.metric(
+            "Recall",
+            f"{best_row['Recall']:.4f}"
         )
 
-        st.dataframe(
-            results,
-            use_container_width=True,
-            hide_index=True
+    with col4:
+
+        st.metric(
+            "F1",
+            f"{best_row['F1']:.4f}"
         )
 
+    with col5:
 
-        # ----------------------------------------------------
-        # METRIC COMPARISON
-        # ----------------------------------------------------
+        st.metric(
+            "ROC-AUC",
+            f"{best_row['ROC-AUC']:.4f}"
+        )
 
-        metric_options = [
+    st.markdown("---")
+
+    st.subheader(
+        f"Best Accuracy Experiment: {best_row['Experiment']}"
+    )
+
+    st.dataframe(
+        pd.DataFrame(
+            [best_row]
+        ),
+        use_container_width=True
+    )
+
+    # --------------------------------------------------------
+    # METRIC SELECTOR
+    # --------------------------------------------------------
+
+    metric = st.selectbox(
+        "Select performance metric",
+        [
             "Accuracy",
             "Precision",
             "Recall",
@@ -800,122 +771,73 @@ elif page == "📈 Model Performance":
             "ROC-AUC",
             "Specificity"
         ]
+    )
 
-        available_metrics = [
-            m for m in metric_options
-            if m in results.columns
-        ]
+    metric_df = results_df[
+        ["Experiment", metric]
+    ].set_index(
+        "Experiment"
+    )
 
-        selected_metric = st.selectbox(
-            "Select metric to compare",
-            available_metrics
-        )
-
-        metric_chart = results[
-            [
-                "Experiment",
-                selected_metric
-            ]
-        ].set_index(
-            "Experiment"
-        )
-
-        st.bar_chart(
-            metric_chart
-        )
+    st.bar_chart(
+        metric_df
+    )
 
 
 # ============================================================
-# PAGE 5 — ABOUT
+# ABOUT PAGE
 # ============================================================
 
 elif page == "ℹ️ About":
 
-    st.title(
-        "ℹ️ About This Application"
-    )
+    st.header("ℹ️ About the Project")
 
-    st.markdown(
-        """
-        ## 🧬 WDBC XGBoost + SHAP
+    st.markdown("""
+    ### WDBC XGBoost Explainable AI
 
-        This application demonstrates an explainable machine
-        learning workflow for the Wisconsin Diagnostic Breast
-        Cancer dataset.
+    This application demonstrates a breast cancer classification
+    pipeline using the Wisconsin Diagnostic Breast Cancer dataset.
 
-        ### 🔬 Methodology
+    **Machine Learning Model**
 
-        **Dataset**
+    - XGBoost Classifier
+    - Binary classification
+    - Malignant vs Benign
 
-        Wisconsin Diagnostic Breast Cancer (WDBC)
+    **Explainable AI**
 
-        **Machine Learning Model**
+    - SHAP feature importance
+    - SHAP summary plot
+    - SHAP bar plot
+    - SHAP waterfall explanation
 
-        XGBoost Classifier
+    **Research Components**
 
-        **Feature Selection**
+    - Baseline experiment
+    - Feature ablation
+    - SHAP-guided feature selection
+    - Top-20 feature selection
+    - Top-15 feature selection
+    - Top-10 feature selection
 
-        SHAP-guided feature ranking
+    **Evaluation Metrics**
 
-        **Deployed Feature Set**
+    - Accuracy
+    - Precision
+    - Recall
+    - F1 Score
+    - ROC-AUC
+    - Specificity
 
-        Top 15 SHAP-ranked features
+    **Deployment**
 
-        **Explainability**
+    - Streamlit
+    - GitHub
+    - Streamlit Community Cloud
+    """)
 
-        SHAP
+    st.markdown("---")
 
-        ### 🧪 Ablation Study
-
-        The research workflow compares:
-
-        - Baseline using all 30 features
-        - Without Mean features
-        - Without Standard Error features
-        - Without Worst features
-        - SHAP Top-20 features
-        - SHAP Top-15 features
-        - SHAP Top-10 features
-
-        ### 🎯 Purpose
-
-        The application is designed for:
-
-        - Research demonstration
-        - Explainable AI
-        - Model evaluation
-        - SHAP-based analysis
-        - Feature ablation analysis
-        - Human-in-the-loop exploration
-
-        ### ⚠️ Disclaimer
-
-        This application is for research and educational
-        demonstration purposes only.
-
-        It is **not a medical diagnostic system** and should
-        not be used to make clinical decisions.
-        """
-    )
-
-    st.divider()
-
-    st.subheader(
-        "📦 Deployment Information"
-    )
-
-    st.write(
-        "**Deployment:** Streamlit Community Cloud"
-    )
-
-    st.write(
-        "**Model:** XGBoost"
-    )
-
-    st.write(
-        "**Explainability:** SHAP"
-    )
-
-    st.write(
-        f"**Deployed Features:** {len(features)}"
+    st.info(
+        "This application is intended for academic and research demonstration purposes."
     )
